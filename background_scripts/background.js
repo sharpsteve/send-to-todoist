@@ -1,5 +1,18 @@
 const browser = require("webextension-polyfill");
 
+async function getApiKey() {
+  const { apiKey } = await browser.storage.local.get("apiKey");
+  return apiKey;
+}
+
+async function getProjects() {
+  const key = await getApiKey();
+  const response = await fetch("https://api.todoist.com/rest/v1/projects", {
+    headers: { Authorization: `Bearer ${key}` }
+  });
+  return response.json();
+}
+
 const DUE_STRINGS = Object.freeze(["Today", "Tomorrow", "Next week"]);
 
 async function setProjectMenus() {
@@ -7,23 +20,23 @@ async function setProjectMenus() {
 
   projects.forEach(({ id, name, color }, index) => {
     const parentId = browser.menus.create({
-      contexts: ["selection", "link"],
+      contexts: ["selection", "link", "page"],
       id: String(id),
       title: `&${index + 1} ${name}`,
       icons: {
-        "16": `icons/project-color-${color}.svg`
+        16: `icons/project-color-${color}.svg`
       }
     });
     DUE_STRINGS.forEach((dueString, dueIndex) => {
       browser.menus.create({
-        contexts: ["selection", "link"],
+        contexts: ["selection", "link", "page"],
         id: `${index}-due-${dueString}`,
         title: `&${dueIndex + 1} ${dueString}`,
         parentId
       });
     });
     browser.menus.create({
-      contexts: ["selection", "link"],
+      contexts: ["selection", "link", "page"],
       id: `${index}-due`,
       title: `&${DUE_STRINGS.length + 1} No due date`,
       parentId
@@ -39,14 +52,23 @@ function setOnboardingMenuAction() {
   });
 }
 
-browser.runtime.onInstalled.addListener(async ({ reason }) => {
-  if (["install", "update", "browser_update"].includes(reason)) {
-    const key = await getApiKey();
-    if (key) {
-      setProjectMenus();
-    } else {
-      setOnboardingMenuAction();
-    }
+browser.runtime.onInstalled.addListener(async () => {
+  await browser.menus.removeAll();
+  const key = await getApiKey();
+  if (key) {
+    setProjectMenus();
+  } else {
+    setOnboardingMenuAction();
+  }
+});
+
+browser.runtime.onStartup.addListener(async () => {
+  await browser.menus.removeAll();
+  const key = await getApiKey();
+  if (key) {
+    setProjectMenus();
+  } else {
+    setOnboardingMenuAction();
   }
 });
 
@@ -61,7 +83,7 @@ browser.runtime.onMessage.addListener(async ({ status }) => {
   }
 });
 
-browser.menus.onClicked.addListener(async event => {
+async function saveTask(event) {
   if (event.menuItemId === "set-todoist-key") {
     return browser.browserAction.openPopup();
   }
@@ -70,7 +92,14 @@ browser.menus.onClicked.addListener(async event => {
   let content = event.selectionText || event.linkText;
 
   if (event.linkUrl) {
-    content += ` ${event.linkUrl}`;
+    content += ` | ${event.linkUrl}`;
+  }
+
+  if (!content && event.pageUrl) {
+    const [title] = await browser.tabs.executeScript({
+      code: "document.title"
+    });
+    content = `[${title}](${event.pageUrl})`;
   }
 
   if (content) {
@@ -99,8 +128,16 @@ browser.menus.onClicked.addListener(async event => {
         message: data.url
       });
     }
+  } else {
+    await browser.notifications.create("noTask", {
+      type: "basic",
+      title: `No content found`,
+      message: JSON.stringify(event)
+    });
   }
-});
+}
+
+browser.menus.onClicked.addListener(saveTask);
 
 browser.notifications.onClicked.addListener(async id => {
   if (id === "newTask") {
@@ -109,15 +146,20 @@ browser.notifications.onClicked.addListener(async id => {
   }
 });
 
-async function getApiKey() {
-  const { apiKey } = await browser.storage.local.get("apiKey");
-  return apiKey;
-}
+browser.commands.onCommand.addListener(async command => {
+  if (command === "save-page") {
+    const key = await getApiKey();
+    if (!key) {
+      return browser.tabs.executeScript({
+        code: "alert('Please enter API key in extension popup')"
+      });
+    }
 
-async function getProjects() {
-  const key = await getApiKey();
-  const response = await fetch("https://api.todoist.com/rest/v1/projects", {
-    headers: { Authorization: `Bearer ${key}` }
-  });
-  return response.json();
-}
+    const projects = await getProjects();
+    const inbox = projects.find(project => project.inbox_project === true);
+    const [pageUrl] = await browser.tabs.executeScript({
+      code: "location.href"
+    });
+    saveTask({ pageUrl, menuItemId: "0-Inbox", parentMenuItemId: inbox.id });
+  }
+});

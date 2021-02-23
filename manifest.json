@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Send to Todoist",
   "description": "Quickly create tasks in Todoist",
-  "version": "1.5.1",
+  "version": "1.7.0",
   "applications": {
     "gecko": {
       "id": "send-to-todoist@hipsterbrown.com"
@@ -15,6 +15,14 @@
   },
   "background": {
     "scripts": ["build/background/index.js"]
+  },
+  "commands": {
+    "save-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+I"
+      },
+      "description": "Create an Inbox task for the current page"
+    }
   },
   "icons": {
     "48": "icons/SendToTodoist.svg",
